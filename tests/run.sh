@@ -184,6 +184,23 @@ ok "autopay off flag" "$(php -r '$s=json_decode(file_get_contents("'$S'/state.js
 # 22 remove card
 PHPRUN 'dskvpos_deleteCard(1, 1);' >/dev/null
 ok "card removed" $(ncards) 1
+# ---- Admin refund / credit helpers --------------------------------------------------------
+ADM() { php -r 'define("ROOTDIR","'$R'");require "'$R'/init.php";require "'$R'/modules/gateways/dskvpos/Cards.php";require "'$R'/modules/gateways/dskvpos/Refund.php";'"$1"; }
+st_() { php -r '$s=json_decode(file_get_contents("'$S'/state.json"),true);'"$1"; }
+ok "refundable lists invoice 1002 payments" "$(ADM 'echo count(dskvpos_refundable(1002)),"/",dskvpos_refundable(1002)[0]["refundable"];')" "2/15"
+ok "partial refund to card" "$(ADM 'echo dskvpos_adminRefund(1002,4,10,true)["ok"]?"y":"n";')" y
+ok "refund went to the bank, not credit" "$(st_ 'echo json_encode([$s["refunds"][0]["gateway"],$s["refunds"][0]["credit"]]);')" "[true,false]"
+ok "refunded amount tracked" "$(ADM 'echo dskvpos_refundable(1002)[0]["refundable"];')" 5
+ok "refund above what is left rejected" "$(ADM 'echo dskvpos_adminRefund(1002,4,6,true)["ok"]?"y":"n";')" n
+ok "refund of other invoice's payment rejected" "$(ADM 'echo dskvpos_adminRefund(1002,1,1,true)["ok"]?"y":"n";')" n
+ok "refund zero rejected" "$(ADM 'echo dskvpos_adminRefund(1002,4,0,true)["ok"]?"y":"n";')" n
+ok "refund as credit" "$(ADM 'echo dskvpos_adminRefund(1002,4,5,false)["ok"]?"y":"n";')" y
+ok "credit refund flagged as credit" "$(st_ 'echo json_encode([$s["refunds"][1]["gateway"],$s["refunds"][1]["credit"]]);')" "[false,true]"
+ok "add credit" "$(ADM 'echo dskvpos_adminAddCredit(1,"7.50","gift")["ok"]?"y":"n";')" y
+ok "credit recorded" "$(st_ 'echo json_encode([$s["credits"][0]["amount"],$s["credits"][0]["clientid"]]);')" "[7.5,1]"
+ok "credit for unknown client rejected" "$(ADM 'echo dskvpos_adminAddCredit(99,5,"")["ok"]?"y":"n";')" n
+ok "negative credit rejected" "$(ADM 'echo dskvpos_adminAddCredit(1,-5,"")["ok"]?"y":"n";')" n
+
 # 11 return endpoint is rate limited per IP
 n=0; for i in $(seq 1 40); do c=$(curl -s -o /dev/null -w '%{http_code}' "$CB/dskvpos.php?invoiceid=1001&orderId=gw-0"); [ "$c" = 429 ] && n=$((n+1)); done
 ok "rate limit returns 429" $([ $n -gt 0 ] && echo y || echo n) y

@@ -16,7 +16,14 @@ function getGatewayVariables($m) {
 function logTransaction($m, $data, $result) { $s = st(); $s['log'][] = $result; st_save($s); }
 function logActivity($m) { $s = st(); $s['activity'][] = $m; st_save($s); }
 function sendMessage($t, $id) { $s = st(); $s['mail'][] = $t . ':' . $id; st_save($s); }
-function localAPI($c, $a) { return ['result' => 'success']; }
+function localAPI($c, $a) { $s = st(); if ($c === 'AddCredit') { $s['credits'][] = $a; st_save($s); } return ['result' => 'success']; }
+function refundInvoicePayment($id, $amt, $gateway, $credit, $mail) {
+    $s = st(); $inv = 0;
+    foreach ($s['payments'] as $i => $p) { if ($i + 1 === (int) $id) { $inv = $p['inv']; } }
+    $s['refunds'][] = ['id' => $id, 'amt' => $amt, 'gateway' => (bool) $gateway, 'credit' => (bool) $credit, 'inv' => $inv];
+    st_save($s);
+    return $credit ? 'creditsuccess' : 'success';
+}
 function checkCbInvoiceID($id, $name) { return $id; }
 function checkCbTransID($t) { $s = st(); foreach ($s['payments'] as $p) { if ($p['trans'] === $t) { die('duplicate'); } } }
 function addInvoicePayment($inv, $trans, $amt, $fee, $m) { usleep(300000); $s = st(); $s['payments'][] = ['inv' => $inv, 'trans' => $trans, 'amt' => $amt]; st_save($s); }
@@ -37,7 +44,8 @@ class Capsule {
     private function base() {
         if ($this->t === 'tblaccounts') {
             $r = [];
-            foreach (st()['payments'] as $p) { $r[] = ['transid' => $p['trans'], 'invoiceid' => $p['inv'], 'amountin' => $p['amt'], 'amountout' => 0]; }
+            foreach (st()['payments'] as $i => $p) { $r[] = ['id' => $i + 1, 'transid' => $p['trans'], 'invoiceid' => $p['inv'], 'gateway' => 'dskvpos', 'date' => '2026-01-01', 'refundid' => 0, 'amountin' => $p['amt'], 'amountout' => 0]; }
+            foreach (st()['refunds'] ?? [] as $i => $f) { $r[] = ['id' => 1000 + $i, 'transid' => 'refund', 'invoiceid' => $f['inv'], 'gateway' => 'dskvpos', 'date' => '2026-01-02', 'refundid' => $f['id'], 'amountin' => 0, 'amountout' => $f['amt']]; }
             return $r;
         } elseif ($this->t === 'tblinvoices') {
             return [

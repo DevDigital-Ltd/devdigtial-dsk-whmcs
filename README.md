@@ -35,6 +35,14 @@ Autopay charges have no customer present, so no 3-D Secure step is possible; the
 
 Use **Refund** on the transaction in the invoice (full or partial). Choose *Refund to card* to send the money back through the bank, or *Add to credit* to give the client account credit (no bank call). The module checks with the bank that the order is captured, the amount does not exceed what was captured and the currency matches.
 
+### Admin page
+
+**Addons → DSK V-POS Cards** (grant the role access in *Staff Management → Administrator Roles → Addon Modules*):
+- **Refund an invoice payment**: enter the invoice number, pick the DSK V-POS payment, enter the amount and choose *back to the card* (through the bank) or *as client credit*. The amount cannot exceed what is left to refund.
+- **Add credit to a client**: client ID, amount and a note.
+
+Every action is written to the Activity Log with the admin's username.
+
 ## Supported currencies
 
 EUR, USD, GBP. The invoice currency must match the currency the client is billed in.
