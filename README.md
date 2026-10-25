@@ -13,7 +13,7 @@
 
 ## Supported currencies
 
-EUR, BGN, USD, GBP. The invoice currency must match the currency the client is billed in.
+EUR, USD, GBP. The invoice currency must match the currency the client is billed in.
 
 ## Safety checks
 

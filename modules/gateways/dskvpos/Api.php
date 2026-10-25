@@ -13,7 +13,6 @@ class Api
     /** ISO 4217 numeric codes */
     const CURRENCIES = [
         'EUR' => '978',
-        'BGN' => '975',
         'USD' => '840',
         'GBP' => '826',
     ];
