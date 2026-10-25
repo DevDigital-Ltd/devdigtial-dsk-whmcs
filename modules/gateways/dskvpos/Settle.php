@@ -70,6 +70,8 @@ function dskvpos_settleOrder(Api $api, $orderId, array $gatewayParams, $expectIn
         || (string) ($status['currency'] ?? '') !== $expected['currency']
         || $paidMinor <= 0 || $paidMinor > $expected['balance']) {
         logTransaction($module, $status, 'Amount/currency mismatch, not credited');
+        logActivity('DSK V-POS: order ' . $orderId . ' for invoice #' . $invoiceId
+            . ' was captured by the bank but NOT credited (amount/currency mismatch). Check manually.');
         return ['paid' => false, 'invoiceId' => $invoiceId];
     }
 

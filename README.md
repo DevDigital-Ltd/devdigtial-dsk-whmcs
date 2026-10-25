@@ -11,6 +11,16 @@
    - **Notification URL**: shown read-only on the same page. Send it to DSK support.
 4. Save. Make a test payment with Test mode on, then turn Test mode off.
 
+## Supported currencies
+
+EUR, BGN, USD, GBP. The invoice currency must match the currency the client is billed in.
+
+## Safety checks
+
+- Payment result is always re-read from the bank, never trusted from the URL.
+- A payment is credited only if the bank amount and currency match the invoice and the amount does not exceed the balance due.
+- If the bank captured money but WHMCS cannot credit it, an entry is written to **Utilities → Logs → Activity Log** and the Gateway Log.
+
 ## Requirements
 
 - WHMCS 8+, PHP 7.4+ with the `curl` extension.

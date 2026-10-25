@@ -14,6 +14,7 @@ function getGatewayVariables($m) {
     ];
 }
 function logTransaction($m, $data, $result) { $s = st(); $s['log'][] = $result; st_save($s); }
+function logActivity($m) { $s = st(); $s['activity'][] = $m; st_save($s); }
 function checkCbInvoiceID($id, $name) { return $id; }
 function checkCbTransID($t) { $s = st(); foreach ($s['payments'] as $p) { if ($p['trans'] === $t) { die('duplicate'); } } }
 function addInvoicePayment($inv, $trans, $amt, $fee, $m) { $s = st(); $s['payments'][] = ['inv' => $inv, 'trans' => $trans, 'amt' => $amt]; st_save($s); }
