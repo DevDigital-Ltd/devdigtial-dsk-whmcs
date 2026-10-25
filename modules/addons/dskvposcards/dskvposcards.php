@@ -20,7 +20,7 @@ function dskvposcards_config()
     return [
         'name' => 'DSK V-POS Cards',
         'description' => 'Saved cards, automatic monthly payment and account credit for the DSK Bank V-POS gateway.',
-        'version' => '1.0',
+        'version' => '1.1.0',
         'author' => 'DevDigital Ltd',
     ];
 }
