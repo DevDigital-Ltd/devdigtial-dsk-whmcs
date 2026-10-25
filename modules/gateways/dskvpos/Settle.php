@@ -3,6 +3,8 @@
 use WHMCS\Database\Capsule;
 use WHMCS\Module\Gateway\DskVpos\Api;
 
+require_once __DIR__ . '/Cards.php';
+
 /**
  * Amount still due (minor units) and the ISO numeric currency code the invoice must be paid in.
  *
@@ -43,8 +45,11 @@ function dskvpos_settleOrder(Api $api, $orderId, array $gatewayParams, $expectIn
         return ['paid' => false, 'invoiceId' => (int) $expectInvoice];
     }
 
-    // orderNumber is "<invoiceid>-<timestamp>"
+    // orderNumber is "<invoiceid>-<timestamp>", or "card-<clientid>-<timestamp>" for card verification
     $orderNumber = (string) ($status['orderNumber'] ?? '');
+    if (strpos($orderNumber, 'card-') === 0) {
+        return ['paid' => false, 'invoiceId' => 0];
+    }
     $invoiceId = (int) strtok($orderNumber, '-');
     $orderStatus = isset($status['orderStatus']) ? (int) $status['orderStatus'] : -1;
 
@@ -101,7 +106,72 @@ function dskvpos_creditOrder(array $status, $orderId, $invoiceId, array $gateway
     logTransaction($module, $status, 'Successful');
     addInvoicePayment($invoiceId, $orderId, $paidMinor / 100, 0, $module);
 
+    // The customer ticked "save card": the bank returns a binding only then.
+    $owner = Capsule::table('tblinvoices')->where('id', $invoiceId)->value('userid');
+    if ($owner) {
+        dskvpos_saveBinding($owner, $status);
+    }
+
     return ['paid' => true, 'invoiceId' => $invoiceId];
+}
+
+/**
+ * Card verification order (pre-authorisation, then released). Saves the binding.
+ * The client comes from the order number and is re-checked against the bank's clientId.
+ *
+ * @return bool true when the card is saved
+ */
+function dskvpos_settleCardOrder(Api $api, $orderId)
+{
+    $module = 'dskvpos';
+
+    try {
+        $status = $api->status($orderId);
+    } catch (\RuntimeException $e) {
+        logTransaction($module, $e->getMessage(), 'Card status error');
+        return false;
+    }
+
+    if (!preg_match('/^card-(\d+)-\d+$/', (string) ($status['orderNumber'] ?? ''), $m)) {
+        return false;
+    }
+    $clientId = (int) $m[1];
+    $orderStatus = isset($status['orderStatus']) ? (int) $status['orderStatus'] : -1;
+
+    $lock = 'dskvpos_' . md5($orderId);
+    $got = Capsule::select('SELECT GET_LOCK(?, 10) AS l', [$lock]);
+    if (empty($got) || (int) $got[0]->l !== 1) {
+        return false;
+    }
+
+    try {
+        // 1 = authorised. 3 = already released by an earlier call (page refresh).
+        if ($orderStatus !== 1 && $orderStatus !== 3) {
+            logTransaction($module, $status, 'Card not verified (orderStatus ' . $orderStatus . ')');
+            return false;
+        }
+        $cardId = dskvpos_saveBinding($clientId, $status);
+        if ($cardId === null) {
+            logTransaction($module, $status, 'Card verification: no binding for client');
+            return false;
+        }
+        if ($orderStatus === 1) {
+            try {
+                $res = $api->reverse($orderId);
+            } catch (\RuntimeException $e) {
+                $res = ['errorCode' => 'x'];
+            }
+            if ((string) ($res['errorCode'] ?? '') !== '0') {
+                logTransaction($module, $res, 'Card verification hold not released');
+                logActivity('DSK V-POS: verification hold ' . $orderId . ' for client #' . $clientId
+                    . ' could not be released automatically. Reverse it in the bank portal.');
+            }
+        }
+        logTransaction($module, $status, 'Card saved');
+        return true;
+    } finally {
+        Capsule::select('SELECT RELEASE_LOCK(?)', [$lock]);
+    }
 }
 
 /**
