@@ -65,12 +65,6 @@ function dskvpos_config()
     ];
 }
 
-/** Signs the payment request so amount/currency cannot be tampered with in the browser. */
-function dskvpos_sign($invoiceId, $minorAmount, $currencyCode, $secret)
-{
-    return hash_hmac('sha256', implode('|', [(int) $invoiceId, (int) $minorAmount, $currencyCode]), $secret);
-}
-
 function dskvpos_link($params)
 {
     $code = Api::currencyCode($params['currency']);
@@ -86,7 +80,7 @@ function dskvpos_link($params)
         'invoiceid' => $params['invoiceid'],
         'amount' => $minor,
         'currency' => $code,
-        'sig' => dskvpos_sign($params['invoiceid'], $minor, $code, $params['password']),
+        'sig' => Api::sign($params['invoiceid'], $minor, $code, $params['password']),
     ];
 
     $html = '<form method="post" action="' . htmlspecialchars($action) . '">';

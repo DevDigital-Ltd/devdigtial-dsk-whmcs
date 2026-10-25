@@ -59,7 +59,27 @@ function dskvpos_settleOrder(Api $api, $orderId, array $gatewayParams, $expectIn
         return ['paid' => false, 'invoiceId' => $invoiceId];
     }
 
-    // Return page and notification race: whichever runs second must not die() in checkCbTransID.
+    // Serialise per order: return page and notification can arrive at the same moment.
+    $lock = 'dskvpos_' . md5($orderId);
+    $got = Capsule::select('SELECT GET_LOCK(?, 10) AS l', [$lock]);
+    if (empty($got) || (int) $got[0]->l !== 1) {
+        logTransaction($module, $status, 'Lock timeout');
+        return ['paid' => false, 'invoiceId' => $invoiceId];
+    }
+
+    try {
+        return dskvpos_creditOrder($status, $orderId, $invoiceId, $gatewayParams);
+    } finally {
+        Capsule::select('SELECT RELEASE_LOCK(?)', [$lock]);
+    }
+}
+
+/** Must run under the per-order lock. */
+function dskvpos_creditOrder(array $status, $orderId, $invoiceId, array $gatewayParams)
+{
+    $module = 'dskvpos';
+
+    // Already recorded by the other path: not an error, and checkCbTransID() would die().
     if (Capsule::table('tblaccounts')->where('transid', $orderId)->exists()) {
         return ['paid' => true, 'invoiceId' => $invoiceId];
     }
@@ -79,7 +99,38 @@ function dskvpos_settleOrder(Api $api, $orderId, array $gatewayParams, $expectIn
     checkCbTransID($orderId);
 
     logTransaction($module, $status, 'Successful');
-    addInvoicePayment($invoiceId, $orderId, ((int) $status['amount']) / 100, 0, $module);
+    addInvoicePayment($invoiceId, $orderId, $paidMinor / 100, 0, $module);
 
     return ['paid' => true, 'invoiceId' => $invoiceId];
+}
+
+/**
+ * Fixed-window counter per key, kept in the system temp dir.
+ *
+ * @return bool true when the caller is over the limit
+ */
+function dskvpos_rateLimited($key, $max, $windowSeconds)
+{
+    $file = sys_get_temp_dir() . '/dskvpos_rl_' . md5($key);
+    $fh = @fopen($file, 'c+');
+    if (!$fh) {
+        return false;
+    }
+    flock($fh, LOCK_EX);
+    $parts = explode('|', (string) stream_get_contents($fh));
+    $count = (int) ($parts[0] ?? 0);
+    $start = (int) ($parts[1] ?? 0);
+    $now = time();
+    if ($now - $start >= $windowSeconds) {
+        $count = 0;
+        $start = $now;
+    }
+    $count++;
+    ftruncate($fh, 0);
+    rewind($fh);
+    fwrite($fh, $count . '|' . $start);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+
+    return $count > $max;
 }

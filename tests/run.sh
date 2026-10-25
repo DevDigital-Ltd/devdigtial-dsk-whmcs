@@ -8,18 +8,22 @@ cp /src/tests/stubs/init.php $R/init.php; cp -r /src/tests/stubs/includes $R/inc
 sed -i "s#https://uat.dskbank.bg/payment/rest/#http://127.0.0.1:8099/#" $R/modules/gateways/dskvpos/Api.php
 export STATE_DIR=$S SYSTEM_URL=http://127.0.0.1:8098
 php -S 127.0.0.1:8099 /src/tests/mock_gateway.php >/dev/null 2>&1 &
-php -S 127.0.0.1:8098 -t $R >/dev/null 2>&1 &
+PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:8098 -t $R >/dev/null 2>&1 &
 sleep 1
 CB=$SYSTEM_URL/modules/gateways/callback
 fail=0
 ok() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1: got '$2' want '$3'"; fail=1; fi; }
 npay() { php -r '$s=json_decode(@file_get_contents("'$S'/state.json"),true);echo count($s["payments"]??[]);'; }
-sig() { php -r 'echo hash_hmac("sha256",implode("|",[1001,'$1',"978"]),"secret");'; }
+sig() { php -r '$k=hash_hmac("sha256","dskvpos-pay-v1","secret");echo hash_hmac("sha256",implode("|",[1001,'$1',"978"]),$k);'; }
 loc() { sed -n 's/^Location: //Ip' | tr -d '\r'; }
 
 # 1 bad signature rejected
 c=$(curl -s -o /dev/null -w '%{http_code}' -d "action=pay&invoiceid=1001&amount=1&currency=978&sig=bad" $CB/dskvpos.php)
 ok "tampered form rejected" $c 400
+# 1b signature made with the raw API password is rejected (key is derived)
+OLD=$(php -r 'echo hash_hmac("sha256",implode("|",[1001,12000,"978"]),"secret");')
+c=$(curl -s -o /dev/null -w '%{http_code}' -d "action=pay&invoiceid=1001&amount=12000&currency=978&sig=$OLD" $CB/dskvpos.php)
+ok "raw-password signature rejected" $c 400
 # 2 signed pay -> redirect to bank form
 L=$(curl -si -d "action=pay&invoiceid=1001&amount=12000&currency=978&sig=$(sig 12000)" $CB/dskvpos.php | loc)
 ok "redirect to formUrl" "$L" "https://uat.example/pay?mdOrder=gw-0"
@@ -60,15 +64,31 @@ L=$(curl -si "$CB/dskvpos.php?invoiceid=1001&orderId=gw-2" | loc)
 ok "overpaid order rejected" "$L" "$SYSTEM_URL/viewinvoice.php?id=1001&paymentfailed=true"
 ok "still two payments" $(npay) 2
 # 8d bank currency differs from invoice currency is not credited
-S840=$(php -r 'echo hash_hmac("sha256",implode("|",[1001,100,"840"]),"secret");')
+S840=$(php -r '$k=hash_hmac("sha256","dskvpos-pay-v1","secret");echo hash_hmac("sha256",implode("|",[1001,100,"840"]),$k);')
 curl -s -o /dev/null -d "action=pay&invoiceid=1001&amount=100&currency=840&sig=$S840" $CB/dskvpos.php
 curl -s "127.0.0.1:8099/_set?orderId=gw-3&status=2" >/dev/null
 L=$(curl -si "$CB/dskvpos.php?invoiceid=1001&orderId=gw-3" | loc)
 ok "wrong currency rejected" "$L" "$SYSTEM_URL/viewinvoice.php?id=1001&paymentfailed=true"
 ok "still two payments (currency)" $(npay) 2
+# 8e return and notification at the same moment: credited once
+curl -s -o /dev/null -d "action=pay&invoiceid=1001&amount=100&currency=978&sig=$(sig 100)" $CB/dskvpos.php
+curl -s "127.0.0.1:8099/_set?orderId=gw-4&status=2" >/dev/null
+CS=$(php -r '$d=["mdOrder"=>"gw-4","operation"=>"deposited","status"=>"1"];ksort($d);$p="";foreach($d as $k=>$v)$p.="$k;$v;";echo strtoupper(hash_hmac("sha256",$p,"cbsecret"));')
+curl -s "$CB/dskvpos_notify.php?mdOrder=gw-4&operation=deposited&status=1&checksum=$CS" >/dev/null &
+P1=$!
+curl -s "$CB/dskvpos.php?invoiceid=1001&orderId=gw-4" >/dev/null &
+P2=$!
+wait $P1 $P2
+ok "concurrent return+notify credits once" $(npay) 3
+# 8f malformed orderId never reaches the bank
+L=$(curl -si "$CB/dskvpos.php?invoiceid=1001&orderId=x%27%3Bdrop" | loc)
+ok "malformed orderId ignored" "$L" "$SYSTEM_URL/viewinvoice.php?id=1001"
 # 9 unsupported currency -> no button
 php -r 'define("WHMCS",1);require "/src/modules/gateways/dskvpos.php";echo strpos(dskvpos_link(["currency"=>"JPY","invoiceid"=>1,"amount"=>"1","systemurl"=>"x","password"=>"p","langpaynow"=>"Pay"]),"not supported")!==false?"y":"n";' > /tmp/o; ok "unsupported currency message" $(cat /tmp/o) y
 # 10 refund (staged module talks to mock bank; gw-0 is captured)
 php -r 'define("WHMCS",1);require "'$R'/modules/gateways/dskvpos.php";$p=["userName"=>"test-api","password"=>"secret","testMode"=>1,"amount"=>"120.00"];echo dskvpos_refund($p+["transid"=>"gw-0"])["status"]," ",dskvpos_refund($p+["transid"=>"nope"])["status"];' > /tmp/o
 ok "refund success / declined" "$(cat /tmp/o)" "success declined"
+# 11 return endpoint is rate limited per IP
+n=0; for i in $(seq 1 40); do c=$(curl -s -o /dev/null -w '%{http_code}' "$CB/dskvpos.php?invoiceid=1001&orderId=gw-0"); [ "$c" = 429 ] && n=$((n+1)); done
+ok "rate limit returns 429" $([ $n -gt 0 ] && echo y || echo n) y
 exit $fail

@@ -34,6 +34,13 @@ class Api
         return isset(self::CURRENCIES[$iso]) ? self::CURRENCIES[$iso] : null;
     }
 
+    /** Signs the pay request. The key is derived so the API password itself is never used as an HMAC key. */
+    public static function sign($invoiceId, $minorAmount, $currencyCode, $apiPassword)
+    {
+        $key = hash_hmac('sha256', 'dskvpos-pay-v1', (string) $apiPassword);
+        return hash_hmac('sha256', implode('|', [(int) $invoiceId, (int) $minorAmount, $currencyCode]), $key);
+    }
+
     /** Decimal amount to minor units without float rounding errors. */
     public static function toMinor($amount)
     {

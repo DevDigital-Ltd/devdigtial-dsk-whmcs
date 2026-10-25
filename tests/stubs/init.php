@@ -17,7 +17,7 @@ function logTransaction($m, $data, $result) { $s = st(); $s['log'][] = $result; 
 function logActivity($m) { $s = st(); $s['activity'][] = $m; st_save($s); }
 function checkCbInvoiceID($id, $name) { return $id; }
 function checkCbTransID($t) { $s = st(); foreach ($s['payments'] as $p) { if ($p['trans'] === $t) { die('duplicate'); } } }
-function addInvoicePayment($inv, $trans, $amt, $fee, $m) { $s = st(); $s['payments'][] = ['inv' => $inv, 'trans' => $trans, 'amt' => $amt]; st_save($s); }
+function addInvoicePayment($inv, $trans, $amt, $fee, $m) { usleep(300000); $s = st(); $s['payments'][] = ['inv' => $inv, 'trans' => $trans, 'amt' => $amt]; st_save($s); }
 
 }
 namespace WHMCS\Database {
@@ -31,7 +31,7 @@ class Capsule {
             $r = [];
             foreach (st()['payments'] as $p) { $r[] = ['transid' => $p['trans'], 'invoiceid' => $p['inv'], 'amountin' => $p['amt'], 'amountout' => 0]; }
         } elseif ($this->t === 'tblinvoices') {
-            $r = [['id' => 1001, 'userid' => 1, 'status' => 'Unpaid', 'total' => 125.00]];
+            $r = [['id' => 1001, 'userid' => 1, 'status' => 'Unpaid', 'total' => 126.00]];
         } elseif ($this->t === 'tblclients') {
             $r = [['id' => 1, 'email' => 'c@example.com', 'language' => 'bulgarian', 'currency' => 1]];
         } else {
@@ -41,6 +41,14 @@ class Capsule {
             foreach ($this->w as $c => $v) { if ((string) $row[$c] !== (string) $v) { return false; } }
             return true;
         }));
+    }
+    private static $locks = [];
+    static function select($q, $b = []) {
+        $f = getenv('STATE_DIR') . '/lock_' . md5($b[0]);
+        if (getenv('NOLOCK')) { return [(object) ['l' => 1]]; }
+        if (strpos($q, 'GET_LOCK') !== false) { $h = fopen($f, 'c'); flock($h, LOCK_EX); self::$locks[$b[0]] = $h; return [(object) ['l' => 1]]; }
+        if (isset(self::$locks[$b[0]])) { flock(self::$locks[$b[0]], LOCK_UN); fclose(self::$locks[$b[0]]); unset(self::$locks[$b[0]]); }
+        return [(object) ['l' => 1]];
     }
     function first() { $r = $this->rows(); return $r ? (object) $r[0] : null; }
     function exists() { return (bool) $this->rows(); }

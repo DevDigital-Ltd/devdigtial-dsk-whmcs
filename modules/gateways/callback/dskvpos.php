@@ -42,7 +42,7 @@ if (($_POST['action'] ?? '') === 'pay') {
     $currency = (string) ($_POST['currency'] ?? '');
     $sig = (string) ($_POST['sig'] ?? '');
 
-    $expected = hash_hmac('sha256', implode('|', [$invoiceId, $minor, $currency]), $gatewayParams['password']);
+    $expected = Api::sign($invoiceId, $minor, $currency, $gatewayParams['password']);
     if (!hash_equals($expected, $sig) || $minor <= 0) {
         http_response_code(400);
         die('Invalid request');
@@ -91,7 +91,24 @@ if (($_POST['action'] ?? '') === 'pay') {
 $invoiceId = (int) ($_GET['invoiceid'] ?? 0);
 $orderId = (string) ($_GET['orderId'] ?? '');
 
-if ($invoiceId <= 0 || $orderId === '') {
+if ($invoiceId <= 0 || !preg_match('/^[0-9a-zA-Z-]{1,64}$/', $orderId)) {
+    dskvpos_redirectInvoice($systemUrl, $invoiceId);
+}
+
+if (dskvpos_rateLimited('return_' . ($_SERVER['REMOTE_ADDR'] ?? '?'), 30, 60)) {
+    http_response_code(429);
+    die('Too many requests');
+}
+
+// Answer from local data when possible so random requests do not become bank API calls.
+$invoice = Capsule::table('tblinvoices')->where('id', $invoiceId)->first();
+if (!$invoice) {
+    dskvpos_redirectInvoice($systemUrl, $invoiceId, false);
+}
+if (Capsule::table('tblaccounts')->where('transid', $orderId)->where('invoiceid', $invoiceId)->exists()) {
+    dskvpos_redirectInvoice($systemUrl, $invoiceId, true);
+}
+if ($invoice->status !== 'Unpaid') {
     dskvpos_redirectInvoice($systemUrl, $invoiceId);
 }
 
