@@ -49,6 +49,23 @@ curl -s "127.0.0.1:8099/_set?orderId=gw-1&status=2" >/dev/null
 CS=$(php -r '$d=["mdOrder"=>"gw-1","operation"=>"deposited","status"=>"1"];ksort($d);$p="";foreach($d as $k=>$v)$p.="$k;$v;";echo strtoupper(hash_hmac("sha256",$p,"cbsecret"));')
 curl -s "$CB/dskvpos_notify.php?mdOrder=gw-1&operation=deposited&status=1&checksum=$CS" >/dev/null
 ok "notification credits payment" $(npay) 2
+# 8b customer return after notification already credited: redirect, no duplicate, no blank page
+L=$(curl -si "$CB/dskvpos.php?invoiceid=1001&orderId=gw-1" | loc)
+ok "return after notify -> paymentsuccess" "$L" "$SYSTEM_URL/viewinvoice.php?id=1001&paymentsuccess=true"
+ok "no duplicate after return" $(npay) 2
+# 8c bank amount above invoice balance is not credited
+curl -s -o /dev/null -d "action=pay&invoiceid=1001&amount=50000&currency=978&sig=$(sig 50000)" $CB/dskvpos.php
+curl -s "127.0.0.1:8099/_set?orderId=gw-2&status=2" >/dev/null
+L=$(curl -si "$CB/dskvpos.php?invoiceid=1001&orderId=gw-2" | loc)
+ok "overpaid order rejected" "$L" "$SYSTEM_URL/viewinvoice.php?id=1001&paymentfailed=true"
+ok "still two payments" $(npay) 2
+# 8d bank currency differs from invoice currency is not credited
+S840=$(php -r 'echo hash_hmac("sha256",implode("|",[1001,100,"840"]),"secret");')
+curl -s -o /dev/null -d "action=pay&invoiceid=1001&amount=100&currency=840&sig=$S840" $CB/dskvpos.php
+curl -s "127.0.0.1:8099/_set?orderId=gw-3&status=2" >/dev/null
+L=$(curl -si "$CB/dskvpos.php?invoiceid=1001&orderId=gw-3" | loc)
+ok "wrong currency rejected" "$L" "$SYSTEM_URL/viewinvoice.php?id=1001&paymentfailed=true"
+ok "still two payments (currency)" $(npay) 2
 # 9 unsupported currency -> no button
 php -r 'define("WHMCS",1);require "/src/modules/gateways/dskvpos.php";echo strpos(dskvpos_link(["currency"=>"JPY","invoiceid"=>1,"amount"=>"1","systemurl"=>"x","password"=>"p","langpaynow"=>"Pay"]),"not supported")!==false?"y":"n";' > /tmp/o; ok "unsupported currency message" $(cat /tmp/o) y
 # 10 refund (staged module talks to mock bank; gw-0 is captured)
